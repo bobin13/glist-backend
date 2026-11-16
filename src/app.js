@@ -15,10 +15,15 @@ app.use((req, res, next) => {
   next();
 });
 
-const configuredOrigins = (process.env.CORS_ORIGINS || '')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+// Only the Netlify frontend may call this API.
+// (Browsers send the Origin without a trailing slash.)
+const configuredOrigins = ['https://glist-home.netlify.app'];
+
+// Previous approach: origins read from the CORS_ORIGINS env var (comma-separated).
+// const configuredOrigins = (process.env.CORS_ORIGINS || '')
+//   .split(',')
+//   .map((origin) => origin.trim())
+//   .filter(Boolean);
 
 app.use((req, res, next) => {
   const origin = req.get('Origin');
