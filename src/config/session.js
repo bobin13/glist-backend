@@ -1,16 +1,33 @@
 const session = require('express-session');
+// Vercel: sessions are stored in Postgres so they survive across serverless instances.
+// To go back to the in-memory store (single long-running server, local dev only),
+// remove these two lines and the `store:` option below.
+const PgSession = require('connect-pg-simple')(session);
+const { pool } = require('./db');
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-if (isProduction) {
-  if (!process.env.SESSION_SECRET) {
-    throw new Error('SESSION_SECRET must be configured in production');
-  }
+// Original guard (before Vercel). It blocked production because the default
+// in-memory store loses sessions on restart. With the Postgres store above it is
+// no longer needed. Restore it if you remove the Postgres store.
+// if (isProduction) {
+//   if (!process.env.SESSION_SECRET) {
+//     throw new Error('SESSION_SECRET must be configured in production');
+//   }
+//
+//   throw new Error('Configure a persistent session store before production use');
+// }
 
-  throw new Error('Configure a persistent session store before production use');
+if (isProduction && !process.env.SESSION_SECRET) {
+  throw new Error('SESSION_SECRET must be configured in production');
 }
 
 module.exports = session({
+  store: new PgSession({
+    pool,
+    tableName: 'session',
+    createTableIfMissing: true
+  }),
   name: 'glist.sid',
   secret: process.env.SESSION_SECRET || 'local-development-session-secret',
   resave: false,
@@ -18,7 +35,8 @@ module.exports = session({
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: false,
+    // Was `secure: false`. Vercel serves over HTTPS, so send the cookie only over HTTPS in production.
+    secure: isProduction,
     maxAge: 24 * 60 * 60 * 1000
   }
 });

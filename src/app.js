@@ -5,6 +5,11 @@ const itemRoutes = require('./features/items/items.routes');
 
 const app = express();
 
+// Vercel: requests arrive through Vercel's HTTPS proxy. Trusting it lets Express
+// see the request as HTTPS so `secure` session cookies are set.
+// Harmless elsewhere, but you can remove it if not deployed behind a proxy.
+app.set('trust proxy', 1);
+
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.originalUrl}`);
   next();
