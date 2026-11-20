@@ -34,9 +34,12 @@ module.exports = session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
+    // Works because the browser only ever talks to the backend same-site:
+    // localhost:8000 -> localhost:3000 locally, and via the Netlify /api proxy in production.
     sameSite: 'lax',
     // Was `secure: false`. Vercel serves over HTTPS, so send the cookie only over HTTPS in production.
     secure: isProduction,
-    maxAge: 24 * 60 * 60 * 1000
+    // Stay signed in for 30 days.
+    maxAge: 30 * 24 * 60 * 60 * 1000
   }
 });

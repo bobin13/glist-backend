@@ -1,7 +1,7 @@
 const { Pool } = require("pg");
 // const fs = require("node:fs");
 // const path = require("node:path");
-require("dotenv").config();
+require("dotenv").config({ quiet: true });
 
 // Old approach: read the CA cert from a .pem file on disk
 // const ca = fs.readFileSync(path.resolve(__dirname, "../../certs/ca.pem"), "utf8");

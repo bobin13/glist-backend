@@ -1,19 +1,17 @@
-const itemsService = require('./items.service');
-const itemsEvents = require('./items.events');
+const itemsRepository = require('./items.repository');
+const events = require('./items.events');
+const validate = require('../../lib/validate');
 
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-async function getAllItems(req, res) {
-  try {
-    const items = await itemsService.getAllItems();
-    return res.status(200).json({ items });
-  } catch (error) {
-    console.error('Failed to retrieve grocery items:', error.message);
-    return res.status(500).json({ error: 'Failed to retrieve grocery items' });
-  }
+function requestId(req) {
+  return req.get('X-Client-Request-Id') || null;
 }
 
-function streamItemEvents(req, res) {
+async function getItems(req, res) {
+  const items = await itemsRepository.findByList(req.params.listId);
+  return res.json({ items, role: req.listRole });
+}
+
+function streamEvents(req, res) {
   res.set({
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -22,75 +20,43 @@ function streamItemEvents(req, res) {
   });
   res.flushHeaders();
   res.write('retry: 3000\n\n');
-  itemsEvents.addClient(res);
+  events.addClient(req.params.listId, req.user.id, res);
 }
 
 async function createItem(req, res) {
-  const { list_id, name, quantity, unit, created_by } = req.body || {};
-
-  if (!uuidPattern.test(list_id || '') || !uuidPattern.test(created_by || '')) {
-    return res.status(400).json({ error: 'Valid list_id and created_by UUIDs are required' });
-  }
-
-  if (typeof name !== 'string' || name.trim().length === 0) {
-    return res.status(400).json({ error: 'A non-empty name is required' });
-  }
+  const { name, quantity = 1, unit = null } = req.body || {};
+  const itemName = validate.name(name, 'Item name', 200);
 
   if (typeof quantity !== 'number' || !Number.isFinite(quantity) || quantity <= 0) {
     return res.status(400).json({ error: 'Quantity must be a positive number' });
   }
-
-  if (unit !== undefined && unit !== null && typeof unit !== 'string') {
+  if (unit !== null && typeof unit !== 'string') {
     return res.status(400).json({ error: 'Unit must be a string or null' });
   }
 
-  try {
-    const item = await itemsService.createItem({
-      list_id,
-      name: name.trim(),
-      quantity,
-      unit: unit ?? null,
-      created_by
-    });
-    itemsEvents.publishItemChange({
-      type: 'created',
-      item,
-      requestId: req.get('X-Client-Request-Id') || null
-    });
-    return res.status(201).json({ item });
-  } catch (error) {
-    if (error.code === '23503') {
-      return res.status(400).json({ error: 'list_id or created_by does not exist' });
-    }
-
-    console.error('Failed to create grocery item:', error.message);
-    return res.status(500).json({ error: 'Failed to create grocery item' });
-  }
+  const item = await itemsRepository.create({
+    listId: req.params.listId,
+    name: itemName,
+    quantity,
+    unit,
+    createdBy: req.user.id
+  });
+  events.publish(req.params.listId, { type: 'created', item, requestId: requestId(req) });
+  return res.status(201).json({ item });
 }
 
-async function deleteItem(req, res) {
-  const { id } = req.params;
+async function removeItem(req, res) {
+  const { listId, itemId } = req.params;
+  const item = validate.isUuid(itemId)
+    ? await itemsRepository.markRemoved(listId, itemId, req.user.id)
+    : null;
 
-  if (!uuidPattern.test(id)) {
-    return res.status(400).json({ error: 'A valid item UUID is required' });
+  if (!item) {
+    return res.status(404).json({ error: 'Item not found' });
   }
 
-  try {
-    const item = await itemsService.deleteItem(id);
-    if (!item) {
-      return res.status(404).json({ error: 'Grocery item not found' });
-    }
-
-    itemsEvents.publishItemChange({
-      type: 'removed',
-      item,
-      requestId: req.get('X-Client-Request-Id') || null
-    });
-    return res.status(200).json({ item });
-  } catch (error) {
-    console.error('Failed to delete grocery item:', error.message);
-    return res.status(500).json({ error: 'Failed to delete grocery item' });
-  }
+  events.publish(listId, { type: 'removed', item, requestId: requestId(req) });
+  return res.json({ item });
 }
 
-module.exports = { getAllItems, streamItemEvents, createItem, deleteItem };
+module.exports = { getItems, streamEvents, createItem, removeItem };
