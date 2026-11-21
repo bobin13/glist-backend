@@ -59,21 +59,61 @@ async function update(id, fields) {
   return rows[0] || null;
 }
 
-async function listAllWithStats() {
-  const { rows } = await pool.query(
-    `SELECT ${PUBLIC_COLUMNS.split(', ').map((c) => `u.${c}`).join(', ')},
-            COUNT(m.list_id) FILTER (WHERE m.role = 'owner')::int AS owned_list_count,
-            COUNT(m.list_id) FILTER (WHERE m.role <> 'owner')::int AS shared_list_count
-     FROM public.users u
-     LEFT JOIN public.list_members m ON m.user_id = u.id
-     GROUP BY u.id
-     ORDER BY u.created_at`
+const USER_FILTERS = {
+  all: 'TRUE',
+  admins: 'u.is_admin',
+  disabled: 'u.is_disabled',
+  active: 'NOT u.is_disabled'
+};
+
+// Admin user search. `search` matches name or email (case-insensitive, partial).
+// Returns one page of users plus the total number of matches.
+async function search({ search: term = '', filter = 'all', limit = 25, offset = 0 }) {
+  // Escape LIKE wildcards so "%" or "_" in the search box match literally.
+  const pattern = `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  const where = `WHERE ${USER_FILTERS[filter] || USER_FILTERS.all}
+       AND ($1 = '%%' OR u.email ILIKE $1 OR u.display_name ILIKE $1)`;
+
+  const [{ rows }, { rows: [{ total }] }] = await Promise.all([
+    pool.query(
+      `SELECT ${PUBLIC_COLUMNS.split(', ').map((c) => `u.${c}`).join(', ')},
+              COUNT(m.list_id) FILTER (WHERE m.role = 'owner')::int AS owned_list_count,
+              COUNT(m.list_id) FILTER (WHERE m.role <> 'owner')::int AS shared_list_count
+       FROM public.users u
+       LEFT JOIN public.list_members m ON m.user_id = u.id
+       ${where}
+       GROUP BY u.id
+       ORDER BY u.created_at
+       LIMIT $2 OFFSET $3`,
+      [pattern, limit, offset]
+    ),
+    pool.query(`SELECT COUNT(*)::int AS total FROM public.users u ${where}`, [pattern])
+  ]);
+
+  return {
+    total,
+    users: rows.map((row) => ({
+      ...toPublicUser(row),
+      owned_list_count: row.owned_list_count,
+      shared_list_count: row.shared_list_count
+    }))
+  };
+}
+
+async function getSystemStats() {
+  const { rows: [stats] } = await pool.query(
+    `SELECT
+       (SELECT COUNT(*) FROM public.users)::int AS users,
+       (SELECT COUNT(*) FROM public.users WHERE is_admin)::int AS admins,
+       (SELECT COUNT(*) FROM public.users WHERE is_disabled)::int AS disabled_users,
+       (SELECT COUNT(*) FROM public.users WHERE created_at > NOW() - INTERVAL '7 days')::int AS new_users_7d,
+       (SELECT COUNT(*) FROM public.grocery_lists)::int AS lists,
+       (SELECT COUNT(*) FROM (
+          SELECT list_id FROM public.list_members GROUP BY list_id HAVING COUNT(*) > 1
+        ) shared)::int AS shared_lists,
+       (SELECT COUNT(*) FROM public.grocery_items WHERE removed_at IS NULL)::int AS open_items`
   );
-  return rows.map((row) => ({
-    ...toPublicUser(row),
-    owned_list_count: row.owned_list_count,
-    shared_list_count: row.shared_list_count
-  }));
+  return stats;
 }
 
 // Log a user out everywhere (used after disabling, password resets and deletion).
@@ -144,7 +184,8 @@ module.exports = {
   findPasswordHash,
   create,
   update,
-  listAllWithStats,
+  search,
+  getSystemStats,
   deleteSessions,
   deleteWithListHandover
 };

@@ -5,6 +5,7 @@ const { requireAdmin } = require('../../middleware/auth');
 const router = express.Router();
 router.use(requireAdmin);
 
+router.get('/stats', admin.getStats);
 router.get('/users', admin.listUsers);
 router.patch('/users/:userId', admin.updateUser);
 router.delete('/users/:userId', admin.deleteUser);

@@ -2,9 +2,22 @@ const usersRepository = require('../users/users.repository');
 const authService = require('../auth/auth.service');
 const validate = require('../../lib/validate');
 
+const USER_FILTERS = ['all', 'admins', 'disabled', 'active'];
+const MAX_PAGE_SIZE = 100;
+
+async function getStats(req, res) {
+  return res.json({ stats: await usersRepository.getSystemStats() });
+}
+
+// GET /api/admin/users?search=ali&filter=admins&limit=25&offset=0
 async function listUsers(req, res) {
-  const users = await usersRepository.listAllWithStats();
-  return res.json({ users });
+  const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : '';
+  const filter = USER_FILTERS.includes(req.query.filter) ? req.query.filter : 'all';
+  const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 25, 1), MAX_PAGE_SIZE);
+  const offset = Math.max(Number.parseInt(req.query.offset, 10) || 0, 0);
+
+  const { users, total } = await usersRepository.search({ search, filter, limit, offset });
+  return res.json({ users, total, limit, offset });
 }
 
 async function updateUser(req, res) {
@@ -67,4 +80,4 @@ async function deleteUser(req, res) {
   return res.status(204).end();
 }
 
-module.exports = { listUsers, updateUser, deleteUser };
+module.exports = { getStats, listUsers, updateUser, deleteUser };
